@@ -36,6 +36,17 @@ _QN = torch.tensor(np.concatenate(_nodes), dtype=DT)
 _QW = torch.tensor(np.concatenate(_weights), dtype=DT)
 # the omitted first panel (0, 2^-60] contributes at most F'(g 2^-60) g 2^-60 (F' nondecreasing):
 # relative size < 1e-18 for every law here.
+_QCACHE = {}
+
+
+def _qrule(ref):
+    """the rule above on the device and dtype of `ref` (copied once per device/dtype)"""
+    if ref.device == _QN.device and ref.dtype == _QN.dtype:
+        return _QN, _QW
+    k = (ref.device, ref.dtype)
+    if k not in _QCACHE:
+        _QCACHE[k] = (_QN.to(device=ref.device, dtype=ref.dtype), _QW.to(device=ref.device, dtype=ref.dtype))
+    return _QCACHE[k]
 
 
 class _FByQuadrature(torch.autograd.Function):
@@ -45,7 +56,8 @@ class _FByQuadrature(torch.autograd.Function):
     def forward(ctx, g, law):
         with torch.no_grad():
             gg = g.reshape(-1, 1)
-            val = (law.dF(gg*_QN[None, :])*_QW[None, :]).sum(-1)*g.reshape(-1)
+            qn, qw = _qrule(g)
+            val = (law.dF(gg*qn[None, :])*qw[None, :]).sum(-1)*g.reshape(-1)
             val = val.reshape(g.shape)
         ctx.save_for_backward(g); ctx.law = law
         return val
@@ -62,7 +74,10 @@ class _ImplicitConjUpper(torch.autograd.Function):
     bisection.  By convexity of F,
         F*(t) = t g* - F(g*) <= t g_lo - F(g_lo) + (t - F'(g_lo)) (g_hi - g_lo)      (Lemma 2.3)
     and the right side is what is returned; after the bisection its excess over F*(t) is below
-    1e-20 relative.  t >= tau_sup gives +inf.  The derivative of F* is g* (taken as the midpoint)."""
+    1e-20 relative.  t >= tau_sup gives +inf.  The derivative of F* is g* (taken as the midpoint).
+    In float32 (GPU training only) 40 bisection steps are used instead of 110: float32 cannot
+    resolve the bracket further, and the returned value is an upper bound for any bracket. The
+    certificate is always evaluated in float64 with the full 110 steps."""
     @staticmethod
     def forward(ctx, t, law):
         with torch.no_grad():
@@ -83,7 +98,7 @@ class _ImplicitConjUpper(torch.autograd.Function):
                 if not bool(need.any()): break
                 lo = torch.where(need, 0.5*lo, lo)
             lo = torch.where(act & (law.dF(lo) > t0), torch.zeros_like(lo), lo)
-            for _ in range(110):
+            for _ in range(110 if t0.dtype == torch.float64 else 40):
                 mid = torch.where(lo > 0, torch.sqrt(lo*hi), 0.5*(lo + hi))
                 up = law.dF(mid) > t0
                 hi = torch.where(act & up, mid, hi); lo = torch.where(act & ~up, mid, lo)
@@ -273,7 +288,7 @@ class Casson(Law):
     def Fstar(self, t):
         s = t.clamp_min(self.ty); st = math.sqrt(self.ty)
         prim = lambda u: (u*u/2 - (4.0/3.0)*st*u**1.5 + self.ty*u)/self.K
-        return prim(s) - prim(torch.as_tensor(self.ty, dtype=DT))
+        return prim(s) - prim(torch.as_tensor(self.ty, dtype=s.dtype, device=s.device))
 
 
 class Cross(Law):

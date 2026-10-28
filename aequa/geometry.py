@@ -18,22 +18,38 @@ DT = torch.float64
 J = lambda v: np.stack([-v[..., 1], v[..., 0]], -1)          # rotation by +90 degrees
 
 
+def _like(cache, key, master, ref):
+    """copy of the float64 CPU tensor `master` on the device and dtype of `ref`, cached in `cache`
+    under (key, device, dtype). The geometry tables are built once on the CPU in float64; this lets
+    the same Domain serve a GPU / float32 training run and a CPU / float64 certificate."""
+    if master.device == ref.device and master.dtype == ref.dtype:
+        return master
+    k = (key, ref.device, ref.dtype)
+    t = cache.get(k)
+    if t is None:
+        t = cache[k] = master.to(device=ref.device, dtype=ref.dtype)
+    return t
+
+
 # ----------------------------------------------------------------- 1D splines (torch)
 class TSpline:
-    """C^2 cubic spline in torch, with derivatives."""
+    """C^2 cubic spline in torch, with derivatives. The tables are kept in float64 on the CPU and
+    copied (once) to the device and dtype of the argument."""
     def __init__(self, p, vals, periodic=False):
         cs = CubicSpline(p, vals, bc_type='periodic' if periodic else 'not-a-knot')
         self.x = torch.tensor(cs.x, dtype=DT)
         self.c = torch.tensor(cs.c, dtype=DT)       # (4, n-1)
+        self._dev = {}
         self.periodic = periodic
         self.lo, self.hi = float(cs.x[0]), float(cs.x[-1])
     def wrap(self, p):
         return self.lo + torch.remainder(p - self.lo, self.hi - self.lo) if self.periodic else p.clamp(self.lo, self.hi)
     def __call__(self, p, k=0):
         p = self.wrap(p)
-        i = torch.searchsorted(self.x, p.detach().contiguous(), right=True) - 1
-        i = i.clamp(0, self.c.shape[1] - 1)
-        d = p - self.x[i]; c = self.c[:, i]
+        xs, cs = _like(self._dev, 'x', self.x, p), _like(self._dev, 'c', self.c, p)
+        i = torch.searchsorted(xs, p.detach().contiguous(), right=True) - 1
+        i = i.clamp(0, cs.shape[1] - 1)
+        d = p - xs[i]; c = cs[:, i]
         if k == 0: return ((c[0]*d + c[1])*d + c[2])*d + c[3]
         if k == 1: return (3*c[0]*d + 2*c[1])*d + c[2]
         if k == 2: return 6*c[0]*d + 2*c[1]
@@ -98,6 +114,7 @@ class Curve:
         self.tab_p = torch.tensor(np.linspace(p0, p1, 801), dtype=DT)
         with torch.no_grad():
             self.tab = torch.stack([self.X(self.tab_p), self.Y(self.tab_p)], -1)
+        self._dev = {}
     def _np(self, p, k=0):
         pt = torch.tensor(np.asarray(p, float), dtype=DT)
         with torch.no_grad():
@@ -110,8 +127,9 @@ class Curve:
     def param(self, x, y, iters=5):
         with torch.no_grad():
             P = torch.stack([x.detach(), y.detach()], -1)
-            idx = torch.cdist(P, self.tab).argmin(1)
-            p = self.tab_p[idx]
+            tab = _like(self._dev, 'tab', self.tab, P)
+            idx = torch.cdist(P, tab).argmin(1)
+            p = _like(self._dev, 'tab_p', self.tab_p, P)[idx]
         for _ in range(iters):            # Newton on (C(p) - x) . C'(p) = 0, differentiable in x
             cx, cy = self.X(p), self.Y(p); dx, dy = self.X(p, 1), self.Y(p, 1); ex, ey = self.X(p, 2), self.Y(p, 2)
             f = (cx - x)*dx + (cy - y)*dy

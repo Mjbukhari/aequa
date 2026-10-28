@@ -72,8 +72,38 @@ def _inv_softplus(y):
 EXP_MARGIN = 0.02          # strict margin above the integrability floors of Lemma 3.1
 
 
+def resolve_device(device=None):
+    """None or 'auto': the first CUDA GPU if PyTorch sees one, else the CPU.
+    'cuda', 'cuda:1', 'cpu' or a torch.device: that device (an error if CUDA is asked for but absent)."""
+    if device is None or device == 'auto':
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    d = torch.device(device)
+    if d.type == 'cuda':
+        if not torch.cuda.is_available():
+            raise RuntimeError("device='cuda' was requested but PyTorch sees no GPU (torch.cuda.is_available() "
+                               "is False). Install a CUDA build of PyTorch, or on Colab choose Runtime > Change "
+                               "runtime type > GPU; or pass device='cpu'.")
+        if d.index is None: d = torch.device('cuda', torch.cuda.current_device())
+    elif d.type != 'cpu':
+        raise ValueError(f"unsupported device {device!r}: use 'auto', 'cpu' or 'cuda'")
+    return d
+
+
+def resolve_precision(precision, device):
+    """dtype used for TRAINING. The certificate is always computed in float64.
+    'auto': float32 on a GPU (consumer and T4/L4 GPUs run float64 about 30x slower), float64 on the CPU;
+    'mixed': float32 training; 'double': float64 training."""
+    if precision == 'auto':
+        return torch.float32 if device.type == 'cuda' else torch.float64
+    if precision == 'mixed': return torch.float32
+    if precision == 'double': return torch.float64
+    raise ValueError("precision must be 'auto', 'mixed' or 'double'")
+
+
 class Solver(nn.Module):
-    def __init__(self, domain, law, rho=0.0, width=64, depth=4, smooth=1e-3, seed=0):
+    def __init__(self, domain, law, rho=0.0, width=64, depth=4, smooth=1e-3, seed=0, device='cpu', precision='auto'):
+        """device: 'cpu' (default for this low-level class, so code that passes CPU tensors to fields()
+        keeps working), 'cuda' or 'auto'. aequa.solve() uses 'auto'. precision: see resolve_precision."""
         super().__init__()
         torch.manual_seed(seed); np.random.seed(seed)
         if not domain.ready:
@@ -127,6 +157,30 @@ class Solver(nn.Module):
         self.holes = nn.ParameterList([nn.Parameter(h.detach().clone()) for h in domain.hole_params])
         domain.hole_params = list(self.holes)          # the lift reads these trainable constants
         self.history = []
+        self.skipped_steps = 0
+        self.device = resolve_device(device)
+        self.train_dtype = resolve_precision(precision, self.device)
+        self.dtype = DT
+        self._place(DT)
+
+    # ---------------------------------------------------------------- device / precision
+    def _place(self, dtype):
+        """move every parameter to self.device in `dtype`. The geometry and rheology tables follow the
+        input points automatically (geometry._like, rheology._qrule)."""
+        if dtype != self.dtype or any(p.device != self.device for p in self.parameters()):
+            self.to(device=self.device, dtype=dtype)
+            self.dtype = dtype
+        self.dom.hole_params = list(self.holes)        # keep the lift pointing at the live parameters
+        return self
+
+    def _points(self, P, requires_grad=False):
+        X = torch.as_tensor(np.ascontiguousarray(P), dtype=self.dtype).to(self.device, non_blocking=True)
+        return X.requires_grad_(True) if requires_grad else X
+
+    def device_info(self):
+        name = torch.cuda.get_device_name(self.device) if self.device.type == 'cuda' else 'CPU'
+        prec = 'float32' if self.train_dtype == torch.float32 else 'float64'
+        return f"device: {self.device} ({name}), training in {prec}, certificate in float64"
 
     # ---------------------------------------------------------------- fields
     def _z(self, x, y):
@@ -232,7 +286,7 @@ class Solver(nn.Module):
             rr = np.hypot(P[:, 0] - h.c[0], P[:, 1] - h.c[1]); inb = (rr <= h.R + bw) & (rr >= 0.5*h.R)
             q += inb*(1 - alpha)/nh/Ab
         w = 1.0/(q*len(P))
-        return torch.tensor(P, dtype=DT), torch.tensor(w, dtype=DT)
+        return self._points(P), self._points(w)
 
     def _band_area(self, h, bw, r_in):
         """area of {r_in <= |x - c| <= R + bw} intersected with the fluid domain (the support of the band
@@ -248,35 +302,52 @@ class Solver(nn.Module):
         return self._band_areas[key]
 
     # ---------------------------------------------------------------- training
-    def train(self, iters=3000, n=2048, lr=2e-3, verbose=200, lbfgs=0):
-        A = self.dom.area()
-        opt = torch.optim.Adam(self.parameters(), lr=lr)
+    def train(self, iters=3000, n=2048, lr=2e-3, verbose=200, lbfgs=0, lbfgs_points=None):
+        """Adam on fresh samples, then (optionally) L-BFGS on one fixed sample set of lbfgs_points
+        points (default 8n). Runs on self.device in self.train_dtype; the parameters are returned to
+        float64 at the end, so everything after training (certificate, evaluation) is float64.
+        A step whose loss or gradient is not finite is skipped (counted in self.skipped_steps)."""
+        self._place(self.train_dtype)
+        params = list(self.parameters())
+        opt = torch.optim.Adam(params, lr=lr)
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, iters, eta_min=lr*0.02)
         t0 = time.time()
         for it in range(iters):
             X, w = self.sample(n); X.requires_grad_(True)
             f = self.fields(X, smooth=self.smooth)
             loss = (w*f['gap']).sum()
-            opt.zero_grad(); loss.backward(); opt.step(); sched.step()
-            self.history.append(float(loss.detach()))
+            opt.zero_grad(set_to_none=True); loss.backward()
+            gnorm = torch.nn.utils.clip_grad_norm_(params, float('inf'))
+            lv, gv = torch.stack([loss.detach(), gnorm.detach().to(loss.dtype)]).tolist()   # one device sync
+            if math.isfinite(lv) and math.isfinite(gv):
+                opt.step(); self.history.append(lv)
+            else:
+                self.skipped_steps += 1
+            sched.step()
             if verbose and (it % verbose == 0 or it == iters - 1):
-                print(f"  it {it:5d}  gap(MC) {float(loss):.4e}   [{time.time()-t0:.0f}s]", flush=True)
+                print(f"  it {it:5d}  gap(MC) {lv:.4e}   [{time.time()-t0:.0f}s]", flush=True)
         if lbfgs:
-            X, wL = self.sample(8*n); X.requires_grad_(True)
-            opt2 = torch.optim.LBFGS(self.parameters(), lr=0.5, max_iter=lbfgs, history_size=50,
+            X, wL = self.sample(lbfgs_points or 8*n); X.requires_grad_(True)
+            opt2 = torch.optim.LBFGS(params, lr=0.5, max_iter=lbfgs, history_size=50,
                                      line_search_fn='strong_wolfe')
             def closure():
                 opt2.zero_grad(); l = (wL*self.fields(X, smooth=self.smooth)['gap']).sum(); l.backward(); return l
             opt2.step(closure)
-            print(f"  L-BFGS: gap(MC, fixed set) {float(closure().detach()):.4e}", flush=True)
+            if verbose:
+                print(f"  L-BFGS: gap(MC, fixed set) {float(closure().detach()):.4e}   [{time.time()-t0:.0f}s]", flush=True)
+            del X, wL
+        if self.skipped_steps and verbose:
+            print(f"  note: {self.skipped_steps} Adam step(s) skipped (non-finite loss or gradient)", flush=True)
+        self._place(DT)
+        if self.device.type == 'cuda': torch.cuda.empty_cache()
         return self
 
     # ---------------------------------------------------------------- certificate
     def exponents(self):
         """learned corner exponents (lambda_k, beta_k), all above the floors of Lemma 3.1"""
         sp = torch.nn.functional.softplus
-        lam = (self.lam_floor + sp(self.corner_lam)).detach().numpy()
-        beta = (self.beta_floor + sp(self.corner_beta)).detach().numpy()
+        lam = (self.lam_floor + sp(self.corner_lam.double())).detach().cpu().numpy()
+        beta = (self.beta_floor + sp(self.corner_beta.double())).detach().cpu().numpy()
         return lam, beta
 
     def kappa_theory(self):
@@ -305,12 +376,18 @@ class Solver(nn.Module):
         """points and positive weights of the deterministic rule (quadrature.py)"""
         R = self.rule(h); return R.P, R.W
 
-    def evaluate(self, P, keys=('gap',), chunk=4096):
+    def evaluate(self, P, keys=('gap',), chunk=None):
+        """fields at points P (numpy, (N, 2)), always in float64, on self.device in chunks;
+        returns numpy arrays"""
+        self._place(DT)
+        if chunk is None: chunk = 8192 if self.device.type == 'cuda' else 4096
+        P = np.asarray(P, float)
         out = {k: [] for k in keys}
+        need_dual = any(k in ('gap', 'm11', 'm12', 'taum', 'p') for k in keys)
         for i in range(0, len(P), chunk):
-            X = torch.tensor(P[i:i + chunk], dtype=DT).requires_grad_(True)
-            f = self.fields(X, smooth=0.0, need_dual=any(k in ('gap', 'm11', 'm12', 'taum', 'p') for k in keys))
-            for k in keys: out[k].append(f[k].detach().numpy())
+            X = self._points(P[i:i + chunk], requires_grad=True)
+            f = self.fields(X, smooth=0.0, need_dual=need_dual)
+            for k in keys: out[k].append(f[k].detach().cpu().numpy())
         return {k: np.concatenate(v) for k, v in out.items()}
 
     def certify_gap(self, h=None):
@@ -379,12 +456,13 @@ class Solver(nn.Module):
 
 def strain_with_grad(S, P, chunk=3000):
     """eps11, eps12 of the network velocity and their spatial gradients at points P"""
+    S._place(DT)
     out = []
     for i in range(0, len(P), chunk):
-        X = torch.tensor(np.ascontiguousarray(P[i:i + chunk]), dtype=DT).requires_grad_(True)
+        X = S._points(P[i:i + chunk], requires_grad=True)
         f = S.fields(X, smooth=0.0, need_dual=False)
         a, b = f['e11'], f['e12']
         ga = torch.autograd.grad(a.sum(), X, retain_graph=True)[0]
         gb = torch.autograd.grad(b.sum(), X)[0]
-        out.append(torch.stack([a, b, ga[:, 0], ga[:, 1], gb[:, 0], gb[:, 1]], 1).detach().numpy())
+        out.append(torch.stack([a, b, ga[:, 0], ga[:, 1], gb[:, 0], gb[:, 1]], 1).detach().cpu().numpy())
     return np.concatenate(out)

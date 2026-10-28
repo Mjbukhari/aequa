@@ -134,16 +134,24 @@ class Result:
         return self.solver.evaluate(P, keys=('u', 'v', 'p'))
 
 
-def solve(domain, law, bcs, rho=0.0, iters=4000, width=48, depth=4, batch=1536, lr=3e-3, lbfgs=300,
-          theta=True, lam=0.0, s0=0.1, theta_target=0.1, verbose=True, seed=0, warm_start=None, h=None):
+def solve(domain, law, bcs, rho=0.0, iters=4000, width=48, depth=4, batch=None, lr=3e-3, lbfgs=300,
+          theta=True, lam=0.0, s0=0.1, theta_target=0.1, verbose=True, seed=0, warm_start=None, h=None,
+          device='auto', precision='auto', lbfgs_points=None):
     """Train a gap-certified network for steady generalised-Newtonian flow and certify it.
-    s0: tube width in units of U/L (only used for floorless shear-thinning laws and for theta)."""
+    s0: tube width in units of U/L (only used for floorless shear-thinning laws and for theta).
+    device: 'auto' (GPU if PyTorch sees one, else CPU), 'cuda' or 'cpu'.
+    precision: training precision; 'auto' = float32 on a GPU, float64 on the CPU; 'mixed' or 'double'
+               to force it. The certificate is always computed in float64, whatever the training precision.
+    batch: training points per Adam step; default 1536 on the CPU, 4096 on a GPU.
+    lbfgs_points: size of the fixed L-BFGS sample set (default 8*batch)."""
     domain.set_bc(bcs)
-    S = Solver(domain, law, rho=rho, width=width, depth=depth, seed=seed)
+    S = Solver(domain, law, rho=rho, width=width, depth=depth, seed=seed, device=device, precision=precision)
+    if batch is None: batch = 4096 if S.device.type == 'cuda' else 1536
     if warm_start is not None:            # continuation: start from a solved neighbouring problem
         S.load_state_dict(warm_start.solver.state_dict() if isinstance(warm_start, Result) else warm_start)
-    if verbose: print(domain.describe(), flush=True)
-    S.train(iters=iters, n=batch, lr=lr, verbose=max(1, iters//10) if verbose else 0, lbfgs=lbfgs)
+    if verbose: print(domain.describe() + "\n" + S.device_info(), flush=True)
+    S.train(iters=iters, n=batch, lr=lr, verbose=max(1, iters//10) if verbose else 0, lbfgs=lbfgs,
+            lbfgs_points=lbfgs_points)
     gap = S.certify_gap(h=h)
     th = theta_bound(S, lam=lam, s=s0*S.Us/S.Ls, target=theta_target, verbose=verbose) if (theta and rho > 0 and law.p > 1 and not S.jump_vertices) else None
     res = Result(S, gap, th, lam, s0)
