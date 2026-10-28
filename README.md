@@ -126,3 +126,7 @@ pytest
 * certified pressure drop with inertia (the Stokes case is certified, Thm 6.4)
 * outflow (traction) and periodic boundaries in the one-call API
 * moving boundaries, 3D, GPU batching
+
+## License
+
+AGPL-3.0, see LICENSE. For commercial licensing, contact M. Javed Bukhari (javedbukhari829@gmail.com).
