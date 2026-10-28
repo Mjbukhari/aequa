@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aequa"
+version = "0.3.1"
+description = "Gap-certified neural solver for steady generalised-Newtonian flow in 2D"
+requires-python = ">=3.9"
+dependencies = ["numpy", "scipy>=1.12", "torch>=2.0", "shapely>=2.1"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+bench = ["scikit-fem>=10", "matplotlib"]
+
+[tool.setuptools]
+packages = ["aequa"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

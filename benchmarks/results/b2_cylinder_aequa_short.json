@@ -1,0 +1,31 @@
+{
+ "G_up": 0.24240976787219776,
+ "G_fine": 0.24239980697929125,
+ "G_coarse": 0.24238990828922785,
+ "quad_diff": 9.898690063403492e-06,
+ "tails": 6.220284310627167e-08,
+ "J_v": 25.73238072577771,
+ "J_lo": 25.489970957905513,
+ "J_hi": 25.73238072577771,
+ "W_lo": 38.234948731886995,
+ "W_hi": 44.853015140811124,
+ "Q_in": 1.999999999999945,
+ "dp_lo": 19.117474365944023,
+ "dp_hi": 22.42650757040618,
+ "n_quad": 291002,
+ "time_s": 717.4085223674774,
+ "summary": "AEQUA certificate (v0.3)\n  law          : Carreau(eta0=1.0, eta_inf=0.05, lam=2.0, n=0.5)   (growth p = 2, conjugate p' = 2, floor nu_* = 0.05)\n  inertia      : rho = 0.0\n  [exact]      admissible for every weight (Lemma 3.1): div v = 0, v = v_D, div Airy(chi) = 0;\n               boundary data imposed = user data up to 7.4e-12 (Remark 4.4)\n  [quadrature] gap G: fine 2.423998e-01 (291002 points), coarse 2.423899e-01, sector tails 6.2e-08\n               G used below = 2.424098e-01   (min pointwise gap 1.4e-08; >= 0 up to rounding)\n               dissipation J(v) = int F(gd(v)) = 2.573238e+01\n  STATUS       : Stokes regime (rho = 0): G = E + E* exactly (Thm 2.1)\n               energy enclosure  J(v) - G <= J* <= J(v):  [2.548997e+01, 2.573238e+01]  (half-width 0.471 % of J)\n               nu_* int |eps(u - v)|^2 <= 2.4241e-01   (= 29.4 % of nu_* int |eps(v)|^2)   [unconditional, Lemma 2.4 / Prop. 4.1(i)]\n               int nu_s |eps(u - v)|^2 <= 2.4241e-01, nu_s = F''(sqrt2((1+lam)|eps v| + s)) (= 14.2 %)\n               [tube statement, Cor. 7.4: holds unless |eps(u - v)| > s0 U/L + lam |eps(v)| on a set of positive measure; s = 0.0347, lam = 0.0]\n  [quadrature] power  W* = int S*:eps(u*) in [3.823495e+01, 4.485302e+01]   (Thm 6.4)\n               pressure drop W*/Q_in in [1.911747e+01, 2.242651e+01]  (flux-weighted drop of the normal stress, Q_in = 2; Cor. 6.5)",
+ "config": {
+  "iters": 2000,
+  "lbfgs": 200,
+  "width": 32,
+  "depth": 3,
+  "batch": 1024
+ },
+ "_machine": {
+  "platform": "Linux-6.18.44-fc-v165-x86_64-with-glibc2.39",
+  "processor": "x86_64",
+  "cpus": 2,
+  "date": "2026-10-28 02:46"
+ }
+}

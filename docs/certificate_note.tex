@@ -1,0 +1,472 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2.4cm]{geometry}
+
+\usepackage{amsmath,amssymb,amsthm,booktabs,enumitem}
+\usepackage[hidelinks]{hyperref}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{remark}[theorem]{Remark}
+\newtheorem{assumption}[theorem]{Assumption}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\eps}{\varepsilon}
+\newcommand{\gd}{\dot\gamma}
+\newcommand{\dev}{\operatorname{dev}}
+\newcommand{\Airy}{\operatorname{Airy}}
+\title{Aequa 0.3: what the code guarantees, and why\\[2pt]\large Certificate note accompanying the library}
+\author{M.~Javed Bukhari}
+\date{October 27, 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note states, for every number printed by \texttt{aequa} 0.3, the result that justifies it, and proves the
+results that are new in this version. References of the form [I, Thm~6.1] are to the working notes
+\emph{Certified inertial flow of convex fluids} (September 28, 2026); the numbering below (Lemma~2.3,
+Lemma~3.1, \dots) is the one quoted in the source code. Each printed number carries one of three labels:
+\textbf{[exact]} (holds for every value of the network weights), \textbf{[quadrature]} (a converged deterministic
+quadrature, not an interval enclosure) and \textbf{[sampled]} (constants computed from sampled network values
+with a safety margin, not interval-verified). Section~7 lists what is not yet guaranteed.
+\end{abstract}
+
+\tableofcontents
+
+\section{Setting}
+
+$\Omega\subset\R^2$ is bounded; its boundary consists of an outer loop and hole loops made of segments,
+circular arcs and smooth curves (\emph{pieces}), with Dirichlet data $u_b$ on every piece and zero net flux
+through every closed boundary component. The law is given by a potential $F$ of the shear rate:
+\[
+\Phi(A)=F(\sqrt2|A|),\qquad \gd(w)=\sqrt2\,|\eps(w)|,\qquad A\in\mathrm{Sym}_0 .
+\]
+$F'$ is the flow curve $\tau(\gd)$. The problem is [I, (P)] with $f=0$:
+$-\operatorname{div}S+\nabla p+\hat\rho(u\cdot\nabla)u=0$, $\operatorname{div}u=0$, $S\in\partial\Phi(\eps(u))$, $u=u_b$.
+
+\paragraph{The network pair.} The library returns
+\begin{align*}
+v&=\operatorname{curl}\psi,\qquad \psi=\psi_{\mathrm{lift}}+\phi^2N+\sum_k \psi_{c,k},\\
+m&=\dev\big(\Airy\chi+\hat\rho\, v\otimes v\big),\qquad \chi=\text{polynomial}+\text{networks}+\text{Michell terms}+\sum_k\chi_{c,k},
+\end{align*}
+with $\Airy\chi=\begin{pmatrix}\chi_{yy}&-\chi_{xy}\\-\chi_{xy}&\chi_{xx}\end{pmatrix}$, $\phi$ a distance function
+vanishing on $\partial\Omega$, and corner terms at every re-entrant vertex $V_k$ of opening $\omega_k>\pi$:
+\[
+\psi_{c,k}=U\rho_k\,\zeta(r)\,(r/\rho_k)^{\lambda_k}(1-t^2)^2 g_k(t),\qquad
+\chi_{c,k}=\Sigma\rho_k^2\,\zeta(r)\,(r/\rho_k)^{\beta_k}h_k(t),\qquad t=\tfrac{2\theta}{\omega_k}-1,
+\]
+in local polar coordinates $(r,\theta)$, $0<\theta<\omega_k$; $\zeta$ is a smooth cutoff, $g_k,h_k$ are small
+networks of one variable, $U,\Sigma$ are scales and
+$\lambda_k=\lambda_{\mathrm{floor}}+\mathrm{softplus}(\cdot)$, $\beta_k=\beta_{\mathrm{floor}}+\mathrm{softplus}(\cdot)$
+are learned.
+
+\paragraph{Gap and errors.} With $a=\eps(v)$,
+\[
+\gamma=\Phi(a)+\Phi^*(m)-m:a=F(\gd(v))+F^*\!\big(|m|/\sqrt2\big)-m:a,\qquad G=\int_\Omega\gamma\,dx,
+\]
+and, for a solution $(u^*,S^*)$, $E=\int D_\Phi(\eps(v),\eps(u^*);S^*)$, $E^*=\int D_{\Phi^*}(m,S^*;\eps(u^*))$ as in [I, Def.~1.5].
+The identity $\Phi^*(M)=F^*(|M|/\sqrt2)$ is Lemma~\ref{lem:radial}.
+
+\section{Laws}
+
+\begin{assumption}\label{ass:F}
+$F:[0,\infty)\to[0,\infty)$ is convex with $F(0)=0$, and $F=\tau_y g+F_K(g)$ with $\tau_y\ge0$, $F_K\in C^1[0,\infty)$,
+$F_K'(0)=0$, $F_K'$ locally absolutely continuous on $(0,\infty)$ and $\int_0^1F_K'(s)s^{-1}ds<\infty$.
+\end{assumption}
+
+All laws of the library satisfy Assumption~\ref{ass:F}: Newtonian, Herschel--Bulkley (power law, Bingham),
+Carreau, Carreau--Yasuda, Casson, Cross with $0<m\le1$, and Williamson (Cross with $m=1$).
+
+\begin{lemma}[radial potentials]\label{lem:radial}
+Under Assumption~\ref{ass:F}, $\Phi$ is convex on $\mathrm{Sym}_0$ and $\Phi^*(M)=F^*(|M|/\sqrt2)$ with
+$F^*(t)=\sup_{g\ge0}(tg-F(g))$. Consequently $\gamma\ge0$ pointwise.
+\end{lemma}
+\begin{proof}
+$A\mapsto\sqrt2|A|$ is convex and $F$ is convex and nondecreasing ($F'\ge F'(0^+)=\tau_y\ge0$), so $\Phi$ is convex.
+For fixed $|A|=\varrho$, $\sup M:A=|M|\varrho$ (attained for $A\parallel M$), hence
+$\Phi^*(M)=\sup_{\varrho\ge0}(|M|\varrho-F(\sqrt2\varrho))=\sup_{g\ge0}(g|M|/\sqrt2-F(g))$. The last claim is Fenchel--Young.
+\end{proof}
+
+\begin{lemma}[guaranteed upper bound for implicit conjugates]\label{lem:Fstar}
+Let $F$ be convex and $0\le g_{lo}\le g_{hi}$ with $F'(g_{lo})\le t\le F'(g_{hi})$ (one-sided derivatives). Then
+\[
+F^*(t)\le t\,g_{lo}-F(g_{lo})+\big(t-F'(g_{lo})\big)(g_{hi}-g_{lo}).
+\]
+\end{lemma}
+\begin{proof}
+$h(g)=tg-F(g)$ is concave with $h'(g)=t-F'(g)$, which is $\ge0$ for $g\le g_{lo}$ and $\le0$ for $g\ge g_{hi}$; so
+$F^*(t)=\max_{[g_{lo},g_{hi}]}h$. On that interval convexity gives $F(g)\ge F(g_{lo})+F'(g_{lo})(g-g_{lo})$, hence
+$h(g)\le tg_{lo}-F(g_{lo})+(t-F'(g_{lo}))(g-g_{lo})$, and $g-g_{lo}\le g_{hi}-g_{lo}$.
+\end{proof}
+
+\paragraph{Use in the code.} For laws without a closed-form conjugate (Carreau, Carreau--Yasuda, Cross, Williamson) the code brackets the
+maximiser by doubling and 110 bisection steps and returns the right side of Lemma~\ref{lem:Fstar}; for
+$t\ge\tau_{\sup}:=\sup F'$ it returns $+\infty$. Since every theorem below is monotone in $G$, an
+over-estimated gap keeps every bound valid. $F$ itself is closed-form except for Carreau--Yasuda and Cross, where
+$F(g)=\int_0^gF'$ is evaluated with a composite geometric 12-point Gauss rule on $(2^{-60}g,g]$; the omitted
+panel is nonnegative and below $F'(2^{-60}g)\,2^{-60}g$, and the Gauss error is at rounding level. This
+component is labelled [quadrature]. The check against brute-force maximisation and the Fenchel--Young equality
+$F(g)+F^*(F'(g))=gF'(g)$ (defect $\sim10^{-16}$ relative) are in the test suite.
+
+\begin{lemma}[unconditional floor]\label{lem:floor}
+Under Assumption~\ref{ass:F} let $\nu_*=\inf_{g>0}\min\big(F_K''(g),F_K'(g)/g\big)$. Then for all $A,B\in\mathrm{Sym}_0$
+and $S\in\partial\Phi(B)$, $D_\Phi(A,B;S)\ge\nu_*|A-B|^2$. If $F_K'$ is concave, $\nu_*=\inf F_K''$, which is the
+floor of [I, Prop.~4.1(i)].
+\end{lemma}
+\begin{proof}
+As in [I, Thm~3.4, Step~1], $D_\Phi\ge D_{\Phi_K}$ with $\Phi_K=F_K(\sqrt2|\cdot|)$. With $\varphi(\varrho)=F_K(\sqrt2\varrho)$,
+$\varphi''=2F_K''$ and $\varphi'/\varrho=2F_K'(\gd)/\gd$, so [I, Lemma~3.3] gives $D^2\Phi_K\ge2\nu_*I$ wherever
+defined. The Taylor argument of [I, Thm~3.4, Step~3] (which uses only Assumption~\ref{ass:F}) gives
+$D_{\Phi_K}(A,B)=\int_0^1(1-t)D^2\Phi_K(x_t)[A-B,A-B]\,dt\ge\nu_*|A-B|^2$. If $F_K'$ is concave with $F_K'(0)=0$, then
+$F_K''(g)\le F_K'(g)/g$.
+\end{proof}
+
+\begin{lemma}[concave flow curves]\label{lem:concave}
+(a) Carreau--Yasuda, $\tau=\eta_\infty\gd+(\eta_0-\eta_\infty)\lambda^{-1}h(\lambda\gd)$ with $h(x)=x(1+x^a)^{\mu}$,
+$\mu=(n-1)/a$, $a>0$: for $0<n\le1$, $h''\le0$ on $[0,\infty)$; so the flow curve is concave, with $\inf\tau'=\eta_\infty$
+for $n<1$. For $n>1$, $\tau'\ge\eta_0$ and $\tau/\gd\ge\eta_0$.\\
+(b) Cross, $\tau=\eta_\infty\gd+(\eta_0-\eta_\infty)\lambda^{-1}k(\lambda\gd)$ with $k(x)=x/(1+x^m)$: for $0<m\le1$,
+$k''\le0$ and $\inf\tau'=\eta_\infty$. For $m>1$ and $\eta_\infty=0$, $\tau'<0$ for large $\gd$ ($F$ is not convex).
+\end{lemma}
+\begin{proof}
+(a) $h'=(1+x^a)^{\mu-1}(1+nx^a)$ and
+\[
+h''=a\,x^{a-1}(1+x^a)^{\mu-2}\big[(n-1)(1+\tfrac1a)+\tfrac{n(n-1)}{a}x^a\big],
+\]
+both brackets are $\le0$ for $n\le1$. For $a=2$ this is [I, Lemma~3.7]. As $x\to\infty$, $h'(x)\to0$ for $n<1$.
+For $n>1$: $1+nx^a\ge1+x^a$, so $h'\ge(1+x^a)^\mu\ge1$, and $h(x)/x=(1+x^a)^\mu\ge1$.
+(b) $k'=(1+(1-m)x^m)/(1+x^m)^2$ and $k''=m x^{m-1}\big[-(1+m)-(1-m)x^m\big]/(1+x^m)^3\le0$ for $m\le1$; $k'\to0$.
+For $m>1$, $k'<0$ once $x^m>1/(m-1)$.
+\end{proof}
+The code rejects Cross laws with $m>1$ (this also excludes some convex cases with large $\eta_\infty$; it is the safe side).
+
+\begin{lemma}[thickening weight in the shear-rate normalisation]\label{lem:thick}
+For Herschel--Bulkley with $1<n\le2$, $D_\Phi(\eps(v),\eps(u);S)\ge\nu_{\mathrm{th}}|\eps(v)-\eps(u)|^2$ with
+$\nu_{\mathrm{th}}=2Kc_q\,\gd(v)^{n-1}$, $c_q\ge1/24$, a weight that depends on the network only.
+\end{lemma}
+\begin{proof}
+$\Phi_K=K(\sqrt2|A|)^r/r$ with $r=n+1\in(2,3]$. [I, Lemma~3.8] gives $D_{\Phi_K}(A,B)\ge K2^{r/2}c_q|A|^{r-2}|A-B|^2$ with
+$A=\eps(v)$, and $2^{r/2}|A|^{n-1}=2^{(n+1)/2}(\gd/\sqrt2)^{n-1}=2\gd^{n-1}$.
+\end{proof}
+
+\paragraph{Tube weight.} For concave flow curves, [I, Cor.~3.5] gives $D_\Phi\ge F_K''(\sqrt2(|a|+t))\,t^2$ with
+$t=|\eps(e)|$. Where $t\le s:=s_0U/L+\lambda|a|$ this is $\ge\nu_s t^2$ with
+$\nu_s=F_K''\big(\sqrt2((1+\lambda)|a|+s_0U/L)\big)$; the code uses $\max(\nu_s,\nu_*)$.
+
+\begin{table}[h]\centering\small
+\begin{tabular}{llll}\toprule
+law & concave & floor $\nu_*$ & growth $p$\\\midrule
+Newtonian $\mu$ & yes & $\mu$ & 2\\
+Herschel--Bulkley, $n\le1$ & yes & $K$ if $n=1$, else 0 & $n+1$\\
+Herschel--Bulkley, $1<n\le2$ & no & 0 (weight of Lemma~\ref{lem:thick}) & $n+1$\\
+Carreau(--Yasuda), $n\le1$ & yes & $\eta_\infty$ & 2 if $\eta_\infty>0$, else $n+1$\\
+Carreau(--Yasuda), $n>1$ & no & $\eta_0$ & $n+1$\\
+Casson & yes & $K$ & 2\\
+Cross, Williamson, $m\le1$ & yes & $\eta_\infty$ & 2 if $\eta_\infty>0$; else $2-m$\\\bottomrule
+\end{tabular}
+\caption{Law data used by the code. $p$ is the growth of $F$ at infinity and $p'=p/(p-1)$. Only Cross with $\eta_\infty=0$, $m=1$ has $p=1$, $p'=\infty$ and a saturating flow curve, $\tau_{\sup}=\eta_0/\lambda$; all other laws have $\tau_{\sup}=\infty$.}
+\end{table}
+
+\section{Admissibility, and corner exponents}
+
+\begin{lemma}[exact admissibility; exponent floors]\label{lem:adm}
+For every value of the weights:
+\begin{enumerate}[label=(\alph*)]
+\item $\operatorname{div}v=0$ in $\Omega$ and $v=u_b^{\mathrm{imp}}$ on every piece, where $u_b^{\mathrm{imp}}$ are the imposed data of
+Section~\ref{sec:lift} ($|u_b^{\mathrm{imp}}-u_b|\le\delta_{\mathrm{data}}$, reported);
+\item $\Airy\chi$ is symmetric and divergence free in $\mathcal D'(\Omega)$; this includes the Michell terms
+of [I, Prop.~21.2], whose stresses are single valued;
+\item if $\lambda_k>\lambda_{\min}=\max(1,2-2/p)$ and $\beta_k>\beta_{\min}=2-2/p'$ ($\beta_{\min}=2$ when
+$\tau_{\sup}<\infty$), then near $V_k$: $\nabla v\in L^q$ for some $q>\max(2,p)$, $F(\gd(v))\in L^1$,
+$F^*(|\Airy\chi_c|/\sqrt2)\in L^1$, and the gap density satisfies $\gamma\lesssim r^{-\kappa_k}$ with
+\[
+\kappa_k=\max\big(0,\,(2-\lambda_k)p,\,(2-\beta_k)p',\,4-\lambda_k-\beta_k\big)<2 .
+\]
+\end{enumerate}
+The code sets $\lambda_k=\lambda_{\mathrm{floor}}+\mathrm{softplus}(\cdot)$ with $\lambda_{\mathrm{floor}}=\lambda_{\min}+0.02$ (and the
+same for $\beta$), so the hypotheses of (c) hold for every weight. Label: [exact].
+\end{lemma}
+\begin{proof}
+(a) $\operatorname{div}\operatorname{curl}=0$. The lift has the data (Section~\ref{sec:lift}); $\phi^2N$ and its
+gradient vanish on $\partial\Omega$. For the corner term, $(1-t^2)^2$ and its $\theta$-derivative
+$\propto t(1-t^2)$ vanish at $t=\pm1$, i.e.\ on both walls of the corner, and the radial derivative carries the
+factor $(1-t^2)^2$; so $\psi_{c,k}=\nabla\psi_{c,k}=0$ on the walls.
+(b) $\operatorname{div}\Airy\chi=(\chi_{yyx}-\chi_{xyy},\,-\chi_{xyx}+\chi_{xxy})=0$ for single-valued $\chi$ with
+$\nabla^2\chi\in L^1_{loc}(\Omega)$; the vertices are not points of $\Omega$. For the Michell terms see
+[I, Prop.~21.2]: their Hessians are single valued away from the hole centres, which lie outside $\Omega$.
+(c) Inside the cutoff, $\nabla^j\psi_{c,k}=O(r^{\lambda_k-j})$, so $\nabla v=O(r^{\lambda_k-2})\in L^q$ for
+$q<2/(2-\lambda_k)$ (any $q$ if $\lambda_k\ge2$). $\lambda_k>1$ gives some $q>2$ and $\lambda_k>2-2/p$ gives some $q>p$.
+$F(\gd)\le c(1+\gd^p)=O(1+r^{(\lambda_k-2)p})$ is integrable in two dimensions iff $(\lambda_k-2)p>-2$. Likewise
+$|\Airy\chi_{c,k}|=O(r^{\beta_k-2})$ and $F^*(t)\le c(1+t^{p'})$; if $\tau_{\sup}<\infty$, $\beta_k>2$ makes the corner
+stress tend to $0$, so it stays below $\tau_{\sup}$ near $V_k$. The remaining parts of $v$ and $m$ are bounded near
+$V_k$ (the stress networks take only smooth inputs, so the defect of [I, Remark~20.6(ii)] cannot occur), and
+$|m:a|\le|m||a|$ gives the last exponent. Finally $(2-\lambda_k)p<2$, $(2-\beta_k)p'<2$ and
+$4-\lambda_k-\beta_k<4-(2-2/p)-(2-2/p')=2$.
+\end{proof}
+
+\begin{lemma}[singular networks in the theorems of {[I]}]\label{lem:sing}
+[I] states Theorem~2.1 for $v\in W^{1,\infty}$. Its proof uses only: $m,S^*\in L^{p'}$, $\eps(v)\in L^p$, and, when
+$\hat\rho>0$, $\int e\cdot\eps(v)e$ finite and (EI) tested with $\ell=v$. In two dimensions these hold when
+$\nabla v\in L^q$ with
+\[
+q\ge p\ \ (\hat\rho=0),\qquad q\ge\max(p,\,2,\,t^*)\ \ (\hat\rho>0),\qquad t^*=\frac{p^*}{p^*-2},\ p^*=\frac{2p}{2-p}\ (p<2).
+\]
+For corner terms this is $\lambda_k>\lambda_{\min}$ when $\hat\rho=0$, and $\lambda_k>\lambda_{\min}^{\mathrm{in}}=\max(\lambda_{\min},4/p-2)$
+when $\hat\rho>0$; the two differ only for $1<p<4/3$. At a vertex with a data jump ($p<2$, Lemma~\ref{lem:jump}),
+$\nabla v=O(r^{-1})$ and only $q<2$ is available.
+\end{lemma}
+\begin{proof}
+For $p<2$, $e\in W^{1,p}_0\subset L^{p^*}$, so $e\cdot\eps(v)e\in L^1$ when $2/p^*+1/q\le1$, i.e.\ $q\ge t^*$; for $p\ge2$
+every $L^s$, $s<\infty$, is available and $q>2$ suffices. In (EI), $\int S^*:\eps(u^*-\ell)$ needs $\eps(\ell)\in L^p$ and
+$\int(u^*\otimes u^*):\nabla\ell$ needs $\nabla\ell\in L^{(p^*/2)'}=L^{t^*}$; (EI) extends from $W^{1,\infty}$ to such $\ell$ by
+density, since every term is continuous in that topology [I, proof of Thm~16.3]. The integration by parts in
+[I, Thm~2.1, Step~2] needs $v\in L^\infty$, $\nabla v\in L^q$, $e\in L^{q'}$. With $q<2/(2-\lambda_k)$:
+$2/(2-\lambda_k)>t^*\iff\lambda_k>2-2/t^*=4/p^*=4/p-2$.
+\end{proof}
+
+The code uses $\lambda_{\min}^{\mathrm{in}}$ as the floor whenever $\hat\rho>0$, and reports \emph{not certified} for
+$\hat\rho>0$ when the data jump at a vertex: the $\theta$ enclosure of [I, Thm~20.2] has corner cells only at
+re-entrant corners, and $|\eps(v)|\sim1/r$ at a jump.
+
+\section{Boundary data}\label{sec:lift}
+
+The lift is the transfinite Hermite construction of [I, Prop.~21.1], with three additions.
+
+\begin{lemma}[closure]\label{lem:closure}
+The user data are represented exactly on segments and by $C^2$ splines on curved pieces. On each closed boundary
+component the net flux of the represented data is computed (Simpson's rule, 8001 points per piece) and removed by a
+uniform normal velocity on that component. The resulting imposed data $u_b^{\mathrm{imp}}$ have zero flux through
+every closed component, so the stream-function values on each component are single valued and the lift of
+[I, Prop.~21.1] applies; $\delta_{\mathrm{data}}$ (Remark~\ref{rem:mismatch}) includes the correction.
+\end{lemma}
+\begin{proof}
+A uniform normal velocity $c$ on a closed component $\Gamma$ adds the flux $c|\Gamma|$; choose $c$ to cancel the
+computed flux. The stream function is the integral of $u_b^{\mathrm{imp}}\cdot n$ along $\Gamma$, which returns to its
+initial value after one turn exactly when the flux vanishes.
+\end{proof}
+
+\begin{lemma}[vertex data]\label{lem:jump}
+Let the data jump at a boundary vertex $V$: $u_b^-(V)\ne u_b^+(V)$. Then every admissible velocity has
+$\int_{\Omega\cap B_\delta(V)}F(\gd)=\infty$ if $p\ge2$, while for $p<2$ the lift satisfies $\nabla v=O(r^{-1})$ and
+$F(\gd(v))=O(r^{-p})\in L^1$.
+\end{lemma}
+\begin{proof}
+For $p>2$, $W^{1,p}\subset C^0(\overline\Omega)$ excludes a jump. For $p=2$, the trace space of $H^1$ near $V$ is
+$H^{1/2}$ of the boundary, and the Gagliardo seminorm of a step diverges logarithmically; since
+$F(\gd)\ge c\gd^2-c'$, the dissipation is infinite. For $p<2$: near $V$ the blending weights of the lift are
+homogeneous of degree $0$ in local polar coordinates, and the stream-function values on the two pieces agree at
+$V$, so $\psi_{\mathrm{lift}}-\psi(V)=O(r)$ with an angular profile; hence $\nabla v=O(r^{-1})$, and
+$\int_0^\delta r^{-p}r\,dr<\infty$.
+\end{proof}
+The code raises an error for a jump when $p\ge2$, and for $p<2$ grades the quadrature at the vertex with
+$\kappa=\max(p,1)$ (Section~\ref{sec:quad}).
+
+\begin{remark}[no-slip vertex blending]\label{rem:blend}
+At a vertex between two no-slip pieces the stream function equals a constant $c$ with zero gradient on both
+walls. The lift is replaced by $c+(1-\mathrm{cut})(\psi_{\mathrm{lift}}-c)$, with
+$\mathrm{cut}=1-s^4(35-84s+70s^2-20s^3)$, $s=\mathrm{clamp}(2r/r_b-1,0,1)$. Since $\psi_{\mathrm{lift}}-c$ and its gradient
+vanish on both walls, so do those of the product: the data stay exact. For $r\le r_b/2$ the lift is exactly
+$c$, which removes the cancellation of $O(u/r^2)$ terms in its second derivatives near the vertex (tested: gradient and
+Hessian are exactly zero there).
+\end{remark}
+
+\begin{remark}[data mismatch]\label{rem:mismatch}
+The certificate concerns the problem with data $u_b^{\mathrm{imp}}$. The code reports
+$\delta_{\mathrm{data}}=\max(\|u_b^{\mathrm{imp}}-u_b\|_\infty$ over the spline representation, the closure correction$)$, typically
+$10^{-12}$. No theorem in this note converts this into a bound for the problem with data $u_b$.
+\end{remark}
+
+\section{Quadrature}\label{sec:quad}
+
+\begin{proposition}[the rule]\label{prop:rule}
+The rule of \texttt{quadrature.py} has positive weights and integrates over a region whose boundary equals
+$\partial\Omega$ exactly for polygons and circular arcs. It is assembled from: graded sectors at every straight
+vertex (polar Gauss panels, geometric towards the vertex down to $t_{\min}=10^{-8}\rho_V$ at singular vertices,
+$10^{-6}\rho_V$ elsewhere, uniform outside); polar bands between every circle and its chord polygon; and tensor
+Gauss cells on the remainder, with cut cells clipped to the remaining polygon and triangulated (Dunavant degree-5
+rule, positive weights).
+\end{proposition}
+\begin{proof}
+Each part is a positive rule on a region described exactly (sectors and bands by polar maps with Jacobian $r>0$;
+remainder cells by exact polygon clipping). The parts have disjoint interiors by construction (overlaps between
+bands are checked and refused), and their union is $\Omega$ (tested: the area is exact to $10^{-10}$ relative on five
+geometries).
+\end{proof}
+
+\begin{lemma}[sector tails]\label{lem:tail}
+On a sector $\{0<r<r_1,\ 0<\theta<\omega\}$ let $f=\sum_i r^{-\kappa_i}g_i(\theta)$ with $g_i\ge0$ and $\kappa_i\le\kappa<2$,
+and let $I_1$ be the integral over the innermost panel $t_{\min}<r<qt_{\min}$. Then
+\[
+\int_{\{r<t_{\min}\}}f\le\frac{I_1}{q^{2-\kappa}-1}.
+\]
+\end{lemma}
+\begin{proof}
+For one term, the integrals over the panels $(q^{-j}t_{\min},q^{-j+1}t_{\min})$ form a geometric sequence with ratio
+$q^{-(2-\kappa_i)}$, so the tail equals $I_1^{(i)}/(q^{2-\kappa_i}-1)\le I_1^{(i)}/(q^{2-\kappa}-1)$. Sum over $i$.
+\end{proof}
+The leading part of the gap density at an enriched corner or a jump vertex is exactly homogeneous inside the
+cutoff (Lemma~\ref{lem:adm}(c), Lemma~\ref{lem:jump}). The code uses $\kappa=\max(\kappa_{\mathrm{fit}},\kappa_{\mathrm{theory}})$,
+where $\kappa_{\mathrm{fit}}$ is read off the two innermost panels. Because the density is not exactly of the form of
+Lemma~\ref{lem:tail}, and the panel integrals are Gauss approximations, the tail is labelled [quadrature].
+
+\begin{remark}[curved pieces]
+Non-circular curves are represented by polylines of 4000 segments; the code reports
+$e_{\mathrm{geo}}=\sum\text{chord}\times\text{sag}$, which bounds the area between curve and polyline for smooth curves, and adds
+$e_{\mathrm{geo}}\max\gamma$ to the gap.
+\end{remark}
+
+\paragraph{The value used.} With the rule at spacing $h$ (24 geometric levels) and at $2h$ (12 levels),
+\[
+G_{\mathrm{up}}=G_h+|G_h-G_{2h}|+\sum\text{tails}+e_{\mathrm{geo}}\max\gamma .
+\]
+The code stops if $\gamma$ is not finite at some point. $G_{\mathrm{up}}$ is a converged quadrature value, labelled
+[quadrature]; it is not an interval enclosure of $G$.
+
+\section{Statements printed by the code}
+
+\begin{proposition}[energy enclosure, $\hat\rho=0$]\label{prop:enc}
+Let $\hat\rho=0$, let $(v,m)$ be admissible with $G<\infty$, and let $J(w)=\int F(\gd(w))$ over divergence-free $w$
+with $w-v\in W^{1,p}_0$ ($W^{1,1}_0$ if $p=1$). Then $J(v)-G\le\inf_wJ(w)\le J(v)$. No existence of a minimiser is
+needed.
+\end{proposition}
+\begin{proof}
+$m\in L^{p'}$ (since $F^*(|m|/\sqrt2)\in L^1$ and $F^*$ grows like $t^{p'}$; $m\in L^\infty$ if $p=1$) and $m=\dev\Airy\chi$ is
+equilibrated, so $\int m:\eps(w-v)=0$. Fenchel--Young gives $J(w)\ge\int m:\eps(w)-\int\Phi^*(m)=\int m:\eps(v)-\int\Phi^*(m)=J(v)-G$.
+\end{proof}
+
+\begin{theorem}[what is printed, by regime]\label{thm:regimes}
+Let $\nu_0\ge0$ be a weight with $E\ge\int\nu_0|\eps(u^*-v)|^2$ for the solutions considered, and let
+\[
+\theta[\nu_0]=\sup_{w\in V\setminus0}\frac{-\hat\rho\int w\cdot\eps(v)w}{\int\nu_0|\eps(w)|^2}.
+\]
+\begin{enumerate}[label=(\roman*)]
+\item $\hat\rho=0$: $G=E+E^*$ for every solution [I, Thm~2.1] ($p>1$; for $p=1$, every solution in $W^{1,1}$ with
+bounded stress), and Proposition~\ref{prop:enc}.
+\item $\hat\rho>0$, $p>1$, no data jumps, $\theta[\nu_0]<1$: $E+E^*\le G/(1-\theta[\nu_0])$ and
+$\int\nu_0|\eps(u^*-v)|^2\le G/(1-\theta[\nu_0])$.
+\item $1\le\theta<2$: existence and uniqueness near $v$ hold [I, Thm~9.1, 17.1], but the bound needs the residual
+$|m-S_a|$, which 0.3 does not evaluate; no number is printed. $\theta\ge2$: not certified.
+\end{enumerate}
+The weights used are: $\nu_*$ (Lemma~\ref{lem:floor}, unconditional); $\nu_{\mathrm{th}}$ (Lemma~\ref{lem:thick},
+unconditional); $\nu_s$ (tube weight, valid for the solutions with $|\eps(u^*-v)|\le s$ a.e.; for the others
+alternative (a) of [I, Cor.~7.4] holds).
+\end{theorem}
+\begin{proof}
+(ii) By [I, Thm~2.1] (valid for the singular networks by Lemma~\ref{lem:sing}),
+$E+E^*\le G+\theta\int\nu_0|\eps(e)|^2\le G+\theta E\le G+\theta(E+E^*)$. This is the proof of [I, Thm~6.1] with
+$\nu_*$ replaced by $\nu_0$, and of [I, Cor.~7.4] with $P=\emptyset$; it uses neither concavity nor the power-law
+form beyond the weight.
+\end{proof}
+
+\paragraph{$\theta$.} The code bounds $\theta[\nu_0]$ by the dual enclosure [I, Thm~20.2] with
+$\tilde\nu=\nu_*f(\rho)\le\nu_0$ and the radial Korn factor of [I, Lemma~20.1]. The line stresses used there are
+exactly equilibrated only if their free ends lie outside $\Omega$; the code moves the ends a margin of
+$10^{-9}\times$range plus twice the largest polyline sag outside, and refuses a line whose end falls inside. The cell
+majorants $P_K$, the floor $\nu_*$ (a sampled minimum, multiplied by $0.95$) and the Gram matrix $D$ use sampled
+network values: label [sampled].
+
+\subsection*{Power and pressure drop ($\hat\rho=0$)}
+
+For $t\ge0$ let $V_t=\{w\in W^{1,p}:\operatorname{div}w=0,\ w=t\,u_b^{\mathrm{imp}}\text{ on }\partial\Omega\}$ and
+$J^*(t)=\inf_{V_t}J$. For a solution $(u^*,S^*)$ with data $u_b^{\mathrm{imp}}$ the \emph{power} is
+\[
+W^*=\int_\Omega S^*:\eps(u^*)\,dx .
+\]
+
+\begin{lemma}[exponent bracket]\label{lem:pbracket}
+If $q_{lo}\le g\tau'(g)/\tau(g)\le q_{hi}$ for a.e.\ $g>0$, then $p_{lo}:=q_{lo}+1\le gF'(g)/F(g)\le q_{hi}+1=:p_{hi}$, and
+$F(tg)\le t^{p_{hi}}F(g)$ for $t\ge1$, $F(tg)\le t^{p_{lo}}F(g)$ for $0\le t\le1$. The code uses
+\begin{center}\small
+\begin{tabular}{lll}\toprule
+law & $[q_{lo},q_{hi}]$ & $[p_{lo},p_{hi}]$\\\midrule
+Newtonian; power law & $\{1\}$; $\{n\}$ & $\{2\}$; $\{n+1\}$\\
+Herschel--Bulkley, $\tau_y>0$ & $[0,n]$ & $[1,n+1]$\\
+Carreau, Carreau--Yasuda & between $n$ and $1$ & between $n+1$ and $2$\\
+Casson, $\tau_y>0$ & $[0,1]$ & $[1,2]$\\
+Cross, Williamson & $[1-m,1]$ & $[2-m,2]$\\\bottomrule
+\end{tabular}
+\end{center}
+\end{lemma}
+\begin{proof}
+For $0<s\le g$, $\log\tau(g)-\log\tau(s)=\int_s^g\tau'/\tau\le q_{hi}\log(g/s)$, so $\tau(s)\ge\tau(g)(s/g)^{q_{hi}}$ and
+$F(g)=\int_0^g\tau\ge g\tau(g)/(q_{hi}+1)$; likewise $F(g)\le g\tau(g)/(q_{lo}+1)$. With $\psi(\sigma)=\log F(e^\sigma)$,
+$\psi'=gF'/F\in[p_{lo},p_{hi}]$; integrate $\psi'$ between $\log g$ and $\log(tg)$. Table: for Herschel--Bulkley
+$g\tau'/\tau=nKg^n/(\tau_y+Kg^n)$; for Carreau--Yasuda $g\tau'/\tau=1+g\eta'/\eta$ with
+$g\eta'/\eta=(n-1)\frac{x^a}{1+x^a}\cdot\frac{(\eta_0-\eta_\infty)(1+x^a)^{\mu}}{\eta}$, both factors in $[0,1]$; for Cross
+$g\eta'/\eta=-m\frac{x^m}{1+x^m}\cdot\frac{(\eta_0-\eta_\infty)/(1+x^m)}{\eta}\in[-m,0]$; for Casson
+$g\tau'/\tau=\sqrt{Kg}/(\sqrt{\tau_y}+\sqrt{Kg})$.
+\end{proof}
+
+\begin{theorem}[certified power]\label{thm:power}
+Let $\hat\rho=0$ and let $(v,m)$ be admissible with gap $G$. For every solution and every $h\in(0,1)$,
+\[
+\frac{J(v)-G-J((1-h)v)}{h}\ \le\ W^*\ \le\ \frac{J((1+h)v)-J(v)+G}{h},
+\qquad
+p_{lo}\,(J(v)-G)\ \le\ W^*\ \le\ p_{hi}\,J(v),
+\]
+where $J(tv)=\int F(t\gd(v))$ is computable from the network. For homogeneous laws ($p_{lo}=p_{hi}=p$:
+Newtonian, power law) $W^*=pJ^*(1)$ and the enclosure has relative width $G/(J(v)-G)$.
+\end{theorem}
+\begin{proof}
+\emph{$W^*$ is a subgradient of $J^*$ at $t=1$.} For $w\in V_t$, $S^*\in\partial\Phi(\eps(u^*))$ gives
+$J(w)\ge J(u^*)+\int S^*:\eps(w-u^*)$. Since $w-tu^*$ is divergence free with zero trace and $S^*$ is equilibrated
+($\hat\rho=0$), $\int S^*:\eps(w-tu^*)=0$, so $\int S^*:\eps(w-u^*)=(t-1)W^*$. With $t=1$ this shows $J(u^*)=J^*(1)$, and
+in general $J^*(t)\ge J^*(1)+(t-1)W^*$.
+\emph{Bounds for $J^*$.} $tv\in V_t$ gives $J^*(t)\le J(tv)$; Proposition~\ref{prop:enc} gives $J^*(1)\ge J(v)-G$. Taking
+$t=1\pm h$ gives the first pair.
+\emph{Structural pair.} $tu^*\in V_t$ and Lemma~\ref{lem:pbracket} give $J^*(1+h)\le(1+h)^{p_{hi}}J^*(1)$ and
+$J^*(1-h)\le(1-h)^{p_{lo}}J^*(1)$; insert into the subgradient inequality and let $h\to0$:
+$p_{lo}J^*(1)\le W^*\le p_{hi}J^*(1)$, then use $J(v)-G\le J^*(1)\le J(v)$.
+\end{proof}
+
+\begin{corollary}[pressure drop]\label{cor:dp}
+$W^*=\int S^*:\eps(z)$ for every divergence-free $z$ with data $u_b^{\mathrm{imp}}$ (since $z-u^*$ has zero trace), so $W^*$ is the
+work done by the boundary tractions; for smooth solutions $W^*=-\int_{\partial\Omega}(\sigma^*n)\cdot u_b^{\mathrm{imp}}\,ds$ with
+$\sigma^*=S^*-p^*I$. If the walls are at rest and the data on inflow and outflow sections are normal to them, then
+\[
+W^*=Q_{in}\,\Delta p,\qquad \Delta p:=\langle-\sigma^*_{nn}\rangle_{in}-\langle-\sigma^*_{nn}\rangle_{out},
+\]
+with flux-weighted averages $\langle f\rangle=\int f\,|u_b\cdot n|\,ds/Q_{in}$ and $Q_{in}$ the inflow flux. Hence
+Theorem~\ref{thm:power} divided by $Q_{in}$ encloses $\Delta p$. In a developed section $\eps_{nn}=0$, so $-\sigma_{nn}=p$ and
+$\Delta p$ is the usual drop of the mean pressure.
+\end{corollary}
+\begin{proof}
+$(\sigma^*n)\cdot u_b=\sigma^*_{nn}(u_b\cdot n)$ on the sections (tangential data vanish), and $u_b=0$ on walls; zero net flux gives
+$Q_{in}=Q_{out}$.
+\end{proof}
+
+\paragraph{In the code.} \texttt{Solver.power\_bounds} evaluates $J(tv)$ on both quadrature rules (with tails and the
+fine--coarse difference as margin), takes $J(v)-G$ with $G=G_{\mathrm{up}}$, maximises the lower and minimises the upper bound
+over 40 values $h\in[10^{-3},0.5]$, and intersects with the structural pair. Label: [quadrature]. On briefly trained channel
+networks the relative width is $8.6\times10^{-4}$ (Newtonian, $G/J=8.6\times10^{-4}$), $5.6\times10^{-2}$ (Carreau) and
+$7.3\times10^{-2}$ (Herschel--Bulkley, $G/J=3.1\times10^{-3}$): for laws with two exponents the two-point bound behaves like
+$\sqrt{G/J}$. With inertia no minimum principle is available and the power is not enclosed in 0.3.
+
+\section{Evidence and limits}
+
+\paragraph{Tests (all pass).}
+\begin{itemize}
+\item Identity $G=E+E^*$ against exact developed channel flows for eight laws, random networks: defect
+$\le2.1\times10^{-10}$ relative; $E,E^*\ge0$. Concentric Couette flow with Michell terms: quadrature-limited, $<10^{-8}$.
+\item Admissibility for random networks: $|\operatorname{div}v|$ and $|\operatorname{div}\sigma|$ below $10^{-9}$ relative on
+three domains (holes, re-entrant corners, curved walls); data mismatch $<10^{-9}$; exponent floors hold with all
+corner parameters at $-50$; lid jump rejected for $p=2$, accepted for $p=1.5$; exact blending.
+\item Quadrature: areas exact to $10^{-10}$ on five geometries; $r^{-\kappa}$ at a re-entrant corner,
+$\kappa=0.5,1.2,1.7$, and $r^{-1.5}$ at a lid jump, against one-dimensional polar integrals: $\le3.6\times10^{-9}$.
+\item Boundary data on nine benchmark geometries.
+\item Power: the enclosure of Theorem~\ref{thm:power} contains the exact value for seven laws (random networks, exact channel flows).
+\end{itemize}
+
+\paragraph{Not guaranteed in 0.3.}
+\begin{enumerate}
+\item No interval arithmetic: $G$ is [quadrature], $\theta$ is [sampled]. For saturating laws, finiteness of
+$F^*(|m|/\sqrt2)$ is checked at the quadrature points only.
+\item No bound in the hybrid regime $1\le\theta<2$ and no check for $\theta\ge2$.
+\item Power and pressure drop are certified for $\hat\rho=0$ only (Theorem~\ref{thm:power}); pointwise pressure is not.
+\item The certificate refers to the imposed data $u_b^{\mathrm{imp}}$, not to $u_b$.
+\item Inertia together with data jumps is refused.
+\end{enumerate}
+
+\end{document}
